@@ -170,3 +170,12 @@ Operational assumptions and failure handling are documented in [`docs/OPERATIONS
 The implementation is a single Python process with one SQLite writer. The measured load run fits within the target 4-vCPU/8-GB envelope, but the writer and evaluation loop are the first expected bottlenecks at 10x scale. The next production step is to partition ingestion and evaluation by tenant or workflow group, then maintain read-only rollups for cross-tenant reporting.
 
 The scope decision, stakeholder responses, and known limitations are captured in [`SUBMISSION.md`](SUBMISSION.md).
+
+## Company submission documentation
+
+For an external reviewer, start with [`docs/COMPANY_SUBMISSION.md`](docs/COMPANY_SUBMISSION.md). It gives the executive summary, problem, solution, innovation, impact, evidence, limitations, and review checklist.
+
+- [`docs/QUICKSTART.md`](docs/QUICKSTART.md): installation, local run, CLI inspection, state management, and troubleshooting.
+- [`docs/TESTING_AND_EVIDENCE.md`](docs/TESTING_AND_EVIDENCE.md): test strategy, test constraints, expected pytest result, and evidence map.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): system design and component boundaries.
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md): operating model, recovery, and scale considerations.
