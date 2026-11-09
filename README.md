@@ -165,6 +165,123 @@ The script kills the controller mid-run, restarts it using the same durable stat
 
 Operational assumptions and failure handling are documented in [`docs/OPERATIONS.md`](docs/OPERATIONS.md) and [`docs/FAILURE_SCENARIOS.md`](docs/FAILURE_SCENARIOS.md).
 
+## Architecture
+
+```mermaid
+flowchart LR
+    S[Simulator / external world] -->|Documented HTTP API| C[Controller]
+    C --> I[Event ingestion]
+    C --> M[Metrics and cohort joins]
+    C --> E[Experiments and incident detection]
+    C --> G[Governance client]
+    C --> R[Supervisor report]
+    I --> DB[(SQLite durable state)]
+    M --> DB
+    E --> DB
+    G --> DB
+    DB --> L[Append-only decision ledger]
+    G -->|Approved or policy-permitted| S
+    S -->|Events, config history, approvals| C
+    E -. prompt candidate suggestions only .-> LLM[LLM suggestion endpoint]
+    LLM -. never selects winner .-> E
+```
+
+The simulator remains the source of world state. The controller owns its
+aggregates, learning state, proposals, approvals, and audit ledger. Detailed
+component boundaries are documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+## Outcome-first decision flow
+
+```mermaid
+flowchart TD
+    A[Read simulator state] --> B[Advance bounded time step]
+    B --> C[Fetch event chunks]
+    C --> D[Transactional ingest and deduplicate]
+    D --> E[Update KPI, cohort, incident, and feature aggregates]
+    E --> F{Population threshold met?}
+    F -->|No| A
+    F -->|Yes| H[Evaluate primary KPI and guardrail]
+    H --> I{Evidence supports a safe change?}
+    I -->|No| J[Record refusal and keep observing]
+    J --> A
+    I -->|Yes| K[Build proposal with diff, impact, affected leads, dry run, rationale]
+    K --> G[Governance policy check]
+    G --> L{Auto-apply permitted?}
+    L -->|Yes| M[Apply with base-version and idempotency checks]
+    L -->|No| N[Request client approval in allowed hours]
+    N --> O{Approved?}
+    O -->|No| P[Record rejection, lapse, or expiry]
+    O -->|Yes| M
+    M --> Q[Verify next aggregate window]
+    Q --> R[Promote, rollback, or continue learning]
+    P --> S[Append decision and observed result]
+    R --> S
+    S --> A
+```
+
+The controller never treats a single call as evidence. A refusal is also a
+decision and is recorded for auditability.
+
+## Governance lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> proposed
+    proposed --> rejected: invalid, unsafe, or no diff
+    proposed --> suppressed: duplicate proposal
+    proposed --> auto_apply: policy permits and base is current
+    proposed --> approval_pending: human approval required
+    approval_pending --> deferred: outside hours or cap reached
+    approval_pending --> expired: TTL elapsed
+    approval_pending --> rejected: approver declines
+    approval_pending --> approved: approver accepts
+    approved --> stale: live base version changed
+    approved --> applying: base still current
+    auto_apply --> applying
+    applying --> applied: simulator confirms change
+    applying --> stale: stale-base response
+    applying --> failed: recoverable or terminal apply failure
+    stale --> proposed: re-propose from newer baseline
+    applied --> verifying
+    verifying --> applied: metrics healthy
+    verifying --> rollback: decay or guardrail regression
+    rollback --> applied
+    rejected --> [*]
+    suppressed --> [*]
+    deferred --> [*]
+    expired --> [*]
+    failed --> [*]
+```
+
+Prompt changes always take the human approval path. Caller-ID and schedule
+changes can use auto-apply only when the workflow policy explicitly permits the
+dimension and the allocation shift is within policy.
+
+## Crash-recovery flow
+
+```mermaid
+sequenceDiagram
+    participant K as Controller
+    participant D as SQLite state
+    participant S as Simulator
+    K->>S: Read state and event chunk
+    K->>D: Begin transaction
+    K->>D: Write aggregates, checkpoint, and ledger entries
+    Note over K,D: Process may terminate here
+    K->>D: Commit transaction
+    K--xK: Crash or forced termination
+    K->>D: Reopen durable state
+    K->>S: Reconcile config history and approvals
+    K->>D: Skip committed chunks and recover pending proposals
+    K->>S: Resume from last simulator minute
+    S-->>K: Finish scenario
+    K->>D: Verify no duplicate applies or requests
+```
+
+The recovery implementation and latest measured result are documented in
+[`scripts/crash_recovery.py`](scripts/crash_recovery.py) and
+[`reports/crash_recovery.md`](reports/crash_recovery.md).
+
 ## Limitations and next step
 
 The implementation is a single Python process with one SQLite writer. The measured load run fits within the target 4-vCPU/8-GB envelope, but the writer and evaluation loop are the first expected bottlenecks at 10x scale. The next production step is to partition ingestion and evaluation by tenant or workflow group, then maintain read-only rollups for cross-tenant reporting.
