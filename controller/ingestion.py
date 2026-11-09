@@ -12,7 +12,7 @@ import json
 import logging
 import time
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from . import db
@@ -315,7 +315,8 @@ class Ingestor:
                 "INSERT INTO chunks(chunk,kind,first_event_id,last_event_id,events,processed_at) "
                 "VALUES(?,?,?,?,?,?)",
                 (n, meta.get("kind", "events"), meta.get("first_event_id"),
-                 meta.get("last_event_id"), events, datetime.utcnow().isoformat() + "Z"))
+                 meta.get("last_event_id"), events,
+                 datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")))
         self.total_events += events
         self.total_calls += calls
         self.total_leads += leads

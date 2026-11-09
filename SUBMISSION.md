@@ -204,25 +204,33 @@ Measured on `scenarios/public_03_load.yaml` (12 workflows, 5 simulated days, ~65
 
 | Metric | Measured |
 |---|---|
-| Wall-clock, full run (history + 5 days) | TBD_WALL |
-| Simulated days per wall-clock minute | TBD_DAYS_PER_MIN |
-| Events ingested | TBD_EVENTS |
-| Ingest throughput | TBD_RATE |
-| Ingestion `duration_ms` (aggregate of chunks) | TBD_INGEST_MS |
-| Peak controller working set | TBD_MEM |
-| SQLite size after the full run | TBD_DB |
-| Decisions recorded | TBD_DEC |
-| Malformed events | TBD_MALFORMED |
+| Wall-clock, controller run (history + 5 days) | ~2m27s |
+| Simulated days per wall-clock minute | ~2.04 |
+| Events ingested | 9,737,504 |
+| Ingest throughput | 32,762 events/s |
+| Ingestion `duration_ms` (aggregate of chunks) | 297,190 |
+| Peak controller working set | ~630 MB RSS |
+| SQLite size after the full run | 430,772,224 bytes (411 MiB) |
+| Decisions recorded | 270 |
+| Malformed events | 0 |
 
 **What breaks first at 10×:** the single SQLite writer and the single evaluation loop. Ingestion is CPU-bound Python parsing; every decision query is an index scan over aggregates, so query cost stays flat while write throughput saturates. At 10× I would partition by tenant (or workflow group): one ingestion writer and one evaluation loop per partition, one decision store per tenant, and a shared read-only rollup for the cross-tenant view. The statistical and governance modules are already partition-safe — they take a workflow and a connection and own no global mutable state. A queue would only be needed if ingestion moved to a separate process; at that point the chunk transaction would become a consumer offset commit.
 
-The design target is 4 vCPU / 8 GB. The measured peak is well inside that; the database stays in the tens of MB because only counters are stored, not events.
+The design target is 4 vCPU / 8 GB. The measured peak is well inside that. The
+load database is 411 MiB: raw events are not stored, but the larger scenario's
+aggregate dimensions and indexes are still material. At 10×, the single SQLite
+writer and evaluation loop are the first scaling boundary; partitioning by
+tenant/workflow is the planned next step. Full measurements are in
+`docs/LOAD_TEST.md` and `reports/public_03.md`.
 
 ## 9. Reliability
 
 **Crash test (method).** `scripts/crash_recovery.py` starts its own simulator on port 8711, starts the controller, waits past bootstrap and history ingestion, kills it with `SIGKILL`/`TerminateProcess` (no cleanup), then restarts it on the same `--state` and waits for the scenario to finish. It then queries the controller's own SQLite for duplicate applies, duplicate approval requests, stuck `submitting` proposals, and malformed events.
 
-**Result:** TBD_CRASH. The ledger and learning state survive; no chunk is half-applied, no proposal is double-applied, no approval is requested twice. Full evidence: `reports/crash_recovery.md`.
+**Result:** PASS. The restart completed at minute 14,400/14,400 with 134
+decisions, 29 controller-applied config versions, zero duplicate applies, zero
+duplicate approval requests, zero stuck `submitting` proposals, and zero
+malformed events. Full evidence: `reports/crash_recovery.md`.
 
 **Idempotency keys.** Chunk number + commit checkpoint (atomic); `proposal_id` deterministic from `(workflow, base_version, config, kind, parent, attempt)`; approval id stored locally and matched to the proposal; simulator config history `proposal_id` used to finish a crashed apply. A simulator `409 duplicate_proposal_id` is adopted, not retried with a new id.
 

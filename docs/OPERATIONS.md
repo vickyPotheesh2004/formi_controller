@@ -132,9 +132,11 @@ entry is written. The decision ledger itself is never deleted.
 ## Load and sizing
 
 The store is counter-based, not event-based. At the public_03 rate (12
-workflows, ~650k dials/day, ~850k events/day, 5 days) the database stays in the
-tens of MB and the loop keeps up with the simulator's 15-minute ticks. Measured
-numbers are in `docs/LOAD_TEST.md` and `reports/public_03.md`.
+workflows, ~650k dials/day, ~850k events/day, 5 days) the controller completed
+the run within the 8 GB envelope. The measured database was 411 MiB and peak
+RSS was approximately 630 MB; raw events are not stored, but aggregate indexes
+are material at this scale. Measured numbers are in `docs/LOAD_TEST.md` and
+`reports/public_03.md`.
 
 For a 10x increase, partition ingestion by workflow or tenant, run one
 evaluation loop per partition, and keep the decision store per tenant. The
